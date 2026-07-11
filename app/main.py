@@ -14,9 +14,10 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import time
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -67,9 +68,26 @@ def _cache_path(text: str, voice_id: str, user_id: str | None) -> str:
     return f"{user_id}/{filename}" if user_id else filename
 
 
+async def _enforce_config(app_name: str | None) -> dict:
+    """Apply Admin-CMS-managed config: maintenance mode + per-app enablement."""
+    config = await storage.get_service_config()
+    if config.get("maintenance_mode"):
+        raise HTTPException(status_code=503, detail="Voice service is in maintenance mode")
+    enabled = config.get("enabled_apps")
+    if enabled and app_name and app_name not in enabled:
+        raise HTTPException(status_code=403, detail=f"Voice service not enabled for '{app_name}'")
+    return config
+
+
 @app.post("/tts")
-async def tts(req: TtsRequest, user: AuthedUser = Depends(require_user)) -> Response:
-    if len(req.text) > settings.MAX_TTS_CHARS:
+async def tts(
+    req: TtsRequest,
+    user: AuthedUser = Depends(require_user),
+    x_client_app: str | None = Header(default=None),
+) -> Response:
+    config = await _enforce_config(x_client_app)
+    max_chars = int(config.get("max_tts_chars") or settings.MAX_TTS_CHARS)
+    if len(req.text) > max_chars:
         raise HTTPException(status_code=413, detail="Text too long")
 
     # A user may only synthesize under their own namespace.
@@ -77,11 +95,21 @@ async def tts(req: TtsRequest, user: AuthedUser = Depends(require_user)) -> Resp
     if owner != user.user_id:
         raise HTTPException(status_code=403, detail="Cannot synthesize for another user")
 
+    started = time.monotonic()
     storage_path = _cache_path(req.text, req.voice_id, owner)
 
     # Serve from cache if present.
     cached = await storage.download_object(settings.AUDIO_CACHE_BUCKET, storage_path)
     if cached is not None:
+        await storage.log_usage({
+            "user_id": user.user_id,
+            "app": x_client_app,
+            "operation": "tts",
+            "characters": len(req.text),
+            "cache_hit": True,
+            "model_variant": settings.CHATTERBOX_VARIANT,
+            "latency_ms": int((time.monotonic() - started) * 1000),
+        })
         return Response(content=cached, media_type="audio/mpeg", headers={"X-Cache": "hit"})
 
     # A voice_id here is a stored reference-sample path in the voice-samples
@@ -113,13 +141,28 @@ async def tts(req: TtsRequest, user: AuthedUser = Depends(require_user)) -> Resp
     # Cache for next time (private bucket).
     await storage.upload_audio(settings.AUDIO_CACHE_BUCKET, storage_path, mp3_bytes, "audio/mpeg")
 
+    await storage.log_usage({
+        "user_id": user.user_id,
+        "app": x_client_app,
+        "operation": "tts",
+        "characters": len(req.text),
+        "cache_hit": False,
+        "model_variant": settings.CHATTERBOX_VARIANT,
+        "latency_ms": int((time.monotonic() - started) * 1000),
+    })
+
     return Response(content=mp3_bytes, media_type="audio/mpeg", headers={"X-Cache": "miss"})
 
 
 @app.post("/clone")
-async def clone(req: CloneRequest, user: AuthedUser = Depends(require_user)) -> dict:
+async def clone(
+    req: CloneRequest,
+    user: AuthedUser = Depends(require_user),
+    x_client_app: str | None = Header(default=None),
+) -> dict:
     if req.user_id != user.user_id:
         raise HTTPException(status_code=403, detail="Cannot clone for another user")
+    await _enforce_config(x_client_app)
 
     # Chatterbox is zero-shot: "cloning" means registering the user's reference
     # sample as their voice id. The sample path IS the voice id; synthesis reads
@@ -140,6 +183,14 @@ async def clone(req: CloneRequest, user: AuthedUser = Depends(require_user)) -> 
 
     voice_id = sample_path  # the private path within voice-samples
     await storage.set_user_voice_id(req.user_id, voice_id)
+    await storage.log_usage({
+        "user_id": user.user_id,
+        "app": x_client_app,
+        "operation": "clone",
+        "characters": 0,
+        "cache_hit": False,
+        "model_variant": settings.CHATTERBOX_VARIANT,
+    })
     return {"voice_id": voice_id}
 
 

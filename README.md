@@ -112,13 +112,33 @@ No app holds any voice key — auth is the user's Supabase JWT.
 
 ---
 
+## Usage tracking + Admin-CMS management
+
+Every `/tts` and `/clone` call is logged (server-side, best-effort) to
+`voice_usage` in the shared DB, attributed by the caller's `X-Client-App` header
+(e.g. `prayer-life`, `speak-life`). This powers the **Voice Service** page in the
+LDOS Admin-CMS panel: per-app usage, cache-hit ratio, latency, and cost tracking
+across the whole tech stack.
+
+The service reads a single-row `voice_service_config` table on each call, so the
+Admin-CMS can manage the Atlantic deployment **without a redeploy**:
+- `maintenance_mode` — flip the service off (returns 503).
+- `enabled_apps` — allow-list which LDOS apps may call it.
+- `max_tts_chars` — per-request character cap.
+- `default_variant`, `daily_char_budget_per_user`, `atlantic_endpoint`.
+
+Apply `migrations/0001_voice_service.sql` to the shared DB (`voice_profiles`,
+`voice_usage`, `voice_service_config`) before first run.
+
 ## Prerequisites in Supabase (one-time)
 
+- Apply `migrations/0001_voice_service.sql` (voice tables + config row).
 - Make **`voice-samples`** and **`creed-audio-cache`** buckets **private** (no
   public URLs). This service uses signed URLs and service-role reads.
 - Ensure `user_life_dna_profiles` has a `voice_id text` column.
 - The service verifies caller JWTs with the project **JWT secret** — same shared
-  City Center project all apps authenticate against.
+  City Center project all apps authenticate against. Every app calling the
+  service should send `X-Client-App: <app-slug>` for per-app usage attribution.
 
 ## Local development (CPU)
 ```bash
