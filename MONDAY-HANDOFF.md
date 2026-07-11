@@ -1,7 +1,17 @@
 # MONDAY-HANDOFF — City Center Voice Service (Chatterbox)
 
-**Repo:** `chatterbox-voice-service` · **Prepared:** 2026-07-11
+**Repo:** `chatterbox-voice-service` · **Prepared:** 2026-07-11 · **Updated:** 2026-07-11 (eve)
 **For:** full-stack dev + infra, standing up the ecosystem voice capability
+
+> **STATUS UPDATE (2026-07-11):** The Admin-CMS "Voice Service" page is BUILT
+> (see §Admin-CMS below). Atlantic deployment is NOT done — it needs
+> Atlantic.net portal + shared-DB credentials that only James/infra hold.
+> The migration was hardened (branch `feature/deploy-prep`): it now creates
+> `public.is_platform_admin()` itself when the shared DB doesn't have one yet
+> (Music LIFE Daily phase-1 and Speak LIFE bucket-2 also define theirs —
+> whichever migration lands first wins; review that the surviving definition
+> is acceptable for ALL of them. Music LIFE's includes church_admin/editors;
+> this repo's fallback is super_admin-only).
 
 One service, used across the **entire LDOS tech stack** (PrayerLIFE, Speak LIFE,
 LifeDNA creeds, Music LIFE, …) for text-to-speech + zero-shot voice cloning.
@@ -58,19 +68,21 @@ row appears.
 
 ---
 
-## ADMIN-CMS INTEGRATION (owned by the spun-off session)
+## ADMIN-CMS INTEGRATION — ✅ BUILT (2026-07-11)
 
-The service is instrumented so the LDOS Admin-CMS can **manage it and track
-usage without redeploys**:
-- **Usage dashboard** — read `voice_usage` (per-app, cache-hit ratio, latency,
-  volume over time) via the CMS service-role backend.
-- **Controls** — edit `voice_service_config` row: `maintenance_mode`,
-  `enabled_apps`, `max_tts_chars`, `default_variant`, `daily_char_budget_per_user`,
-  `atlantic_endpoint`. The service reads this on every call.
-- **Health** — poll `GET /healthz` on the Atlantic endpoint for status.
+Done in `LIFE-OS-CMS-Admin-Panel-jul26-` on branch `feature/voice-service-page`
+(unpushed, unmerged — see that repo's `MONDAY-HANDOFF.md` for run steps):
+- **Usage dashboard** — `voice_usage` read via the CMS service-role backend
+  (`server/voice-service-routes.ts`, mounted at `/api/voice`): per-app volume +
+  cache-hit + latency, daily chart, top users, 7d/30d/90d ranges.
+- **Controls** — edits the single `voice_service_config` row (all six fields);
+  the service reads it on every call, so changes apply without redeploy.
+- **Health** — CMS backend probes `GET {atlantic_endpoint}/healthz`; badge
+  polls every 60s.
 
-Target repo: `LIFE-OS-CMS-Admin-Panel-jul26-` (add a "Voice Service" page under
-`src/pages/`). This is a separate workstream — see the spawned session.
+Prereqs for it to light up: apply this repo's migration to the shared DB and
+set `SUPABASE_SERVICE_ROLE_KEY` in the CMS server env. Everything degrades
+with explicit error messages until then (tested).
 
 ---
 

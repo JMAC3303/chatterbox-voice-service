@@ -59,9 +59,48 @@ create table if not exists public.voice_service_config (
   updated_by uuid
 );
 alter table public.voice_service_config enable row level security;
--- Read/write only by platform admins (adjust predicate to the ecosystem's).
+
+-- Platform-admin predicate. Other ecosystem migrations (Music LIFE Daily
+-- phase-1, Speak LIFE bucket-2) also define one; whichever lands first wins,
+-- so this only creates it when the shared DB doesn't have it yet. Fallback
+-- definition: super_admin via JWT app_metadata (what the Admin-CMS server
+-- middleware reads) or via public.user_roles when that table exists.
+do $$
+begin
+  if not exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'is_platform_admin'
+  ) then
+    execute $fn$
+      create function public.is_platform_admin()
+      returns boolean
+      language plpgsql stable security definer
+      set search_path = public, pg_catalog
+      as $body$
+      begin
+        if coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin', false) then
+          return true;
+        end if;
+        if to_regclass('public.user_roles') is not null then
+          return exists (
+            select 1 from public.user_roles
+            where user_id = auth.uid() and role = 'super_admin'
+          );
+        end if;
+        return false;
+      end;
+      $body$
+    $fn$;
+    execute 'grant execute on function public.is_platform_admin() to authenticated';
+  end if;
+end $$;
+
+-- Read/write only by platform admins (the Admin-CMS edits this row through
+-- its service-role backend, which bypasses RLS; this policy is the
+-- defense-in-depth path for direct client access).
 create policy "voice_config_admin_all" on public.voice_service_config
-  for all using (is_platform_admin()) with check (is_platform_admin());
+  for all using (public.is_platform_admin()) with check (public.is_platform_admin());
 
 insert into public.voice_service_config (id) values (1)
   on conflict (id) do nothing;
