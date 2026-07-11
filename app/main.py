@@ -62,6 +62,47 @@ def healthz() -> dict:
     return {"status": "ok", "variant": settings.CHATTERBOX_VARIANT}
 
 
+# Built-in default voices are curated reference clips seeded (by ops) under
+# this prefix in the private voice-samples bucket. Zero-shot synthesis reads
+# them exactly like a user's cloned sample, so "adding a voice" is just
+# uploading a 5–10s licensed clip — no model change, no redeploy.
+BUILTIN_VOICE_PREFIX = "builtin/"
+
+
+@app.get("/voices")
+async def voices(user: AuthedUser = Depends(require_user)) -> dict:
+    """Voices the caller may synthesize with: the built-in set + their own."""
+    builtin: list[dict] = []
+    try:
+        objects = await storage.list_objects(
+            settings.VOICE_SAMPLES_BUCKET, BUILTIN_VOICE_PREFIX
+        )
+        for obj in objects:
+            name = obj.get("name", "")
+            # Skip folder placeholders / hidden objects.
+            if not name or name.startswith("."):
+                continue
+            stem = name.rsplit(".", 1)[0]
+            builtin.append({
+                "voice_id": f"{BUILTIN_VOICE_PREFIX}{name}",
+                "name": stem.replace("-", " ").replace("_", " ").title(),
+                "builtin": True,
+            })
+    except Exception:
+        pass  # bucket not seeded yet — return whatever else we have
+
+    mine = [
+        {
+            "voice_id": p.get("voice_id"),
+            "name": p.get("display_name") or "My Voice",
+            "builtin": False,
+            "app": p.get("app"),
+        }
+        for p in await storage.get_user_voice_profiles(user.user_id)
+    ]
+    return {"voices": builtin + mine}
+
+
 def _cache_path(text: str, voice_id: str, user_id: str | None) -> str:
     digest = hashlib.sha256(f"{voice_id}::{text}".encode()).hexdigest()
     filename = f"{digest}.mp3"
@@ -183,6 +224,9 @@ async def clone(
 
     voice_id = sample_path  # the private path within voice-samples
     await storage.set_user_voice_id(req.user_id, voice_id)
+    await storage.register_voice_profile(
+        req.user_id, voice_id, req.voice_name, x_client_app
+    )
     await storage.log_usage({
         "user_id": user.user_id,
         "app": x_client_app,

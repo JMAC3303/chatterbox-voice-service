@@ -40,6 +40,9 @@ AI, MIT), self-hosted on our Atlantic.net GPU box.
    (seeds one config row). Adjust the `is_platform_admin()` predicate to the
    ecosystem's real admin check.
 2. **Confirm bucket privacy** for `voice-samples` and `creed-audio-cache`.
+   Then **seed built-in voices**: upload 8–15 curated 5–10s reference clips to
+   `voice-samples/builtin/` (see README "Prerequisites" for naming +
+   licensing). `GET /voices` serves this set + the caller's cloned voices.
 3. **Provision the Atlantic.net GPU server** and deploy per `README.md`
    (NVIDIA driver + container toolkit → `docker build` → `docker run --gpus all`
    → Caddy/nginx TLS at `voice.lifedailyos.app`). Set env from `.env.example`:
@@ -58,6 +61,7 @@ AI, MIT), self-hosted on our Atlantic.net GPU box.
 | Item | State |
 |---|---|
 | Service code (FastAPI, auth, engine, storage, usage logging, config gate) | ✅ authored, reviewed |
+| `GET /voices` + `/clone` → `voice_profiles` registry (added 2026-07-11) | ✅ authored; ❌ not run (no local Python) — cover in the Atlantic smoke test |
 | Runtime / model load / synthesis | ❌ NOT run here — no local GPU/Python. First real test is on the Atlantic box (`GET /healthz`, then a `/tts`). |
 | Migration SQL | ✅ authored; ⚠️ review `is_platform_admin()` + journals/PK assumptions before applying |
 | App client contract | ✅ PrayerLIFE `voiceService.ts` matches `/tts` + `/clone` and sends `X-Client-App` |
@@ -86,15 +90,23 @@ with explicit error messages until then (tested).
 
 ---
 
+## DECISIONS (James, 2026-07-11)
+- **Atlantic GPU sizing — DECIDED:** `AL40S.192GB` (1× L40S 48 GB,
+  ~$1,121/mo month-to-month). Smallest GPU tier they sell; big VRAM headroom
+  for concurrency/multilingual/future workloads. Don't take the 3-year term
+  (~5.5% saving) until usage proves out. Details in README §Hosting.
+- **Default voices — DECIDED:** BOTH. Ship a curated built-in set
+  (`voice-samples/builtin/`, seeded at deploy — see order of ops #2) AND
+  keep user voice cloning. `GET /voices` (new) lists built-ins + the
+  caller's own voices; `/clone` now also registers into `voice_profiles`.
+
 ## OPEN QUESTIONS FOR A HUMAN
-- **Atlantic GPU sizing** — Turbo (350M) fits ~6–8 GB VRAM; pick the instance
-  tier and confirm budget.
-- **Default voices** — ship a small set of built-in voice samples (paths in
-  `voice-samples`) for apps that don't clone, or require every voice to be
-  user-cloned? Affects onboarding.
 - **Watermark policy** — Chatterbox embeds Resemble's Perth neural watermark on
   all output. Confirm that's acceptable for all use cases (it's a plus for
   provenance, but note it).
+- **Built-in voice sourcing** — who records/licenses the 8–15 seed clips?
+  In-house recordings are cleanest (biometric consent, Article 9); CC-BY
+  corpora (e.g. VCTK) work with attribution.
 
 ## REFERENCE
 - Service + Atlantic hosting: `README.md`
