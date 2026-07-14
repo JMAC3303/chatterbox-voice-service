@@ -46,6 +46,14 @@ persists it on `user_life_dna_profiles.voice_id`. Synthesis reads the sample
 server-side at generation time — the biometric sample never goes to any third
 party.
 
+### `GET /voices`
+Voices the signed-in caller may synthesize with: the curated **built-in set**
+(objects under `builtin/` in the private `voice-samples` bucket) plus the
+caller's own registered voices from `voice_profiles`. Returns
+`{ "voices": [{ "voice_id", "name", "builtin" }] }`. Adding a built-in voice =
+uploading a 5–10s reference clip to `voice-samples/builtin/` — zero-shot means
+no model change and no redeploy.
+
 ### `GET /healthz`
 Liveness + which model variant is loaded.
 
@@ -60,11 +68,20 @@ Chatterbox needs an NVIDIA GPU for acceptable latency (Turbo runs comfortably on
 a single modern GPU; CPU works but is slow).
 
 ### 1. Provision a GPU cloud server
-In the Atlantic.net cloud portal, create a **GPU Cloud Server**:
-- **GPU:** one NVIDIA GPU (e.g. an L40S / A100 / RTX-class instance). Turbo (350M)
-  fits in ~6–8 GB VRAM; give headroom at 16 GB+.
+**Chosen plan (James, 2026-07-11): `AL40S.192GB`** — Atlantic.net's smallest
+GPU tier (1× NVIDIA L40S 48 GB, 32 vCPU, 192 GB RAM, 1.4 TB NVMe;
+~$1,121/mo month-to-month ≈ $1.67/hr). Rationale:
+- It's the entry tier; there is no smaller GPU instance. The L40S's 48 GB VRAM
+  is far above Turbo's ~6–8 GB need, which buys concurrent synthesis workers,
+  the multilingual variant, and room to co-host future sovereignty AI
+  workloads (v8 §3.6) on the same box.
+- Voice count does NOT affect sizing — built-in voices and user clones are
+  just reference clips read at synthesis time (zero-shot).
+- Start **month-to-month**; the 3-year term only saves ~5.5% ($1,058.70/mo) —
+  commit after usage proves out.
+
+In the Atlantic.net cloud portal, create the **GPU Cloud Server**:
 - **OS:** Ubuntu 22.04 LTS.
-- **Disk:** 40 GB+ (model weights + audio cache scratch).
 - Open inbound **443** (HTTPS via the reverse proxy below); keep **8000**
   (the app port) firewalled to localhost only.
 
@@ -135,6 +152,13 @@ Apply `migrations/0001_voice_service.sql` to the shared DB (`voice_profiles`,
 - Apply `migrations/0001_voice_service.sql` (voice tables + config row).
 - Make **`voice-samples`** and **`creed-audio-cache`** buckets **private** (no
   public URLs). This service uses signed URLs and service-role reads.
+- **Seed the built-in voice set** (decision 2026-07-11: apps get default
+  voices AND user cloning): upload 8–15 curated reference clips (5–10s each,
+  mono WAV/WebM, varied gender/age/tone) to `voice-samples/builtin/`. File
+  name becomes the display name (`warm-female.wav` → "Warm Female").
+  ⚠️ Licensing: record in-house or use permissively licensed clips (e.g.
+  CC-BY corpora like VCTK — keep attribution); never seed a real person's
+  voice without written consent (biometric, Article 9).
 - Ensure `user_life_dna_profiles` has a `voice_id text` column.
 - The service verifies caller JWTs with the project **JWT secret** — same shared
   City Center project all apps authenticate against. Every app calling the
