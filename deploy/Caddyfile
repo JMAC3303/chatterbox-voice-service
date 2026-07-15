@@ -1,0 +1,18 @@
+# Caddy reverse proxy for the City Center Voice Service.
+# Installed to /etc/caddy/Caddyfile by deploy/01-provision.sh.
+#
+# Caddy obtains and renews the Let's Encrypt certificate automatically —
+# the DNS A record for voice.lifedailyos.app must point at this server first.
+
+voice.lifedailyos.app {
+	reverse_proxy 127.0.0.1:8000
+
+	# Synthesis of long texts can take a while on first (uncached) generation.
+	# Caddy's default has no proxy read timeout, so no override needed; kept
+	# explicit here in case defaults change:
+	# reverse_proxy 127.0.0.1:8000 {
+	#	transport http {
+	#		response_header_timeout 120s
+	#	}
+	# }
+}
